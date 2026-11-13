@@ -1,0 +1,9 @@
+{
+  "desc": "ESP32-C3 Bluetooth audio settings",
+  "rules": [
+    {
+      "action": "allow",
+      "page": "*"
+    }
+  ]
+}

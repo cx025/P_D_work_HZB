@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10151c">
+  <title>ESP32-C3 音频控制</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
+      background: #f3f7fc;
+      color: #172b49;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; padding: 28px 18px 48px; }
+    main { width: min(100%, 620px); margin: 0 auto; }
+    h1 { margin: 0; font-size: clamp(27px, 6vw, 38px); }
+    button, input { font: inherit; }
+    button {
+      border: 0;
+      border-radius: 11px;
+      padding: 12px 17px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .primary { color: #fff; background: #2478f2; }
+    .secondary { color: #46617f; background: #eaf1f9; }
+    .intro { margin: 10px 0 22px; color: #68809e; line-height: 1.65; }
+    .card {
+      margin-top: 17px;
+      padding: 22px;
+      border: 1px solid #e2eaf4;
+      border-radius: 18px;
+      background: #fff;
+      box-shadow: 0 12px 36px #1d427012;
+    }
+    .connection-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .connection-label { display: flex; align-items: center; font-weight: 700; }
+    .dot { width: 10px; height: 10px; margin-right: 9px; border-radius: 50%; background: #a6b5c8; }
+    .dot.online { background: #24bf92; box-shadow: 0 0 13px #24bf9244; }
+    .metric {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 18px;
+      padding: 15px;
+      border-radius: 12px;
+      background: #f0f6ff;
+    }
+    .muted, .hint { color: #8798ad; }
+    .pressure { font-size: 17px; font-weight: 700; }
+    .pressure.active { color: #ffbd69; }
+    .section-title { margin: 0 0 13px; font-size: 18px; }
+    .volume-row { display: flex; align-items: center; gap: 14px; }
+    input[type="range"] { flex: 1; accent-color: #2478f2; }
+    .volume-value { min-width: 48px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .timing-title { margin-top: 28px; }
+    .delay-row {
+      display: grid;
+      grid-template-columns: 1fr minmax(100px, 130px) 30px;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0;
+      border-top: 1px solid #e8eef5;
+    }
+    .delay-name { color: #4b627e; }
+    input[type="number"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #d9e4f0;
+      border-radius: 9px;
+      color: #203b5d;
+      background: #f9fbfe;
+      text-align: right;
+    }
+    .unit { color: #8494a8; font-size: 13px; }
+    .hint { margin: 12px 0 0; font-size: 13px; line-height: 1.6; }
+    .save { width: 100%; margin-top: 20px; }
+    .save-state { min-height: 20px; margin-top: 12px; color: #73869d; font-size: 13px; text-align: center; }
+    .save-state.error { color: #d84b4b; }
+    .log { max-height: 160px; overflow: auto; margin: 12px 0 0; color: #627993; font: 12px/1.6 ui-monospace, monospace; white-space: pre-wrap; }
+    .notice { padding: 12px 14px; border: 1px solid #d7e6f8; border-radius: 12px; color: #3c5d83; background: #f0f6ff; line-height: 1.55; }
+    @media (max-width: 420px) {
+      .card { padding: 18px; }
+      .connection-row { align-items: flex-start; flex-direction: column; }
+      .connection-row button { width: 100%; }
+      .delay-row { grid-template-columns: 1fr 105px 25px; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ESP32-C3 久坐健康管家</h1>
+    <p class="intro">通过蓝牙设置提醒音量和三级久坐触发时间。入座确认 30 秒后开始累计，设置保存到设备 Flash。</p>
+
+    <div id="browserNotice" class="notice" hidden></div>
+
+    <section class="card">
+      <div class="connection-row">
+        <div class="connection-label"><span id="connectionDot" class="dot"></span><span id="connectionState">未连接</span></div>
+        <button id="connectButton" class="primary" type="button">连接 ESP32-C3</button>
+        <button id="disconnectButton" class="secondary" type="button" hidden>断开连接</button>
+      </div>
+      <div class="metric">
+        <span class="muted">入座状态</span>
+        <span id="pressureState" class="pressure">等待设备连接</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">播放音量</h2>
+      <div class="volume-row">
+        <input id="volume" type="range" min="0" max="100" step="1" value="70" disabled>
+        <span id="volumeValue" class="volume-value">70%</span>
+      </div>
+
+      <h2 class="section-title timing-title">连续久坐提醒时间</h2>
+      <label class="delay-row" for="delay1">
+        <span class="delay-name">一级 · 轻微屁</span>
+        <input id="delay1" type="number" min="1" max="1440" step="1" value="30" disabled>
+        <span class="unit">分钟</span>
+      </label>
+      <label class="delay-row" for="delay2">
+        <span class="delay-name">二级 · 爆炸屁</span>
+        <input id="delay2" type="number" min="1" max="1440" step="1" value="60" disabled>
+        <span class="unit">分钟</span>
+      </label>
+      <label class="delay-row" for="delay3">
+        <span class="delay-name">三级 · 尴尬屁</span>
+        <input id="delay3" type="number" min="1" max="1440" step="1" value="90" disabled>
+        <span class="unit">分钟</span>
+      </label>
+      <p class="hint">入座稳定 30 秒后开始计时；时间范围 1–1440 分钟且不可递减。三级后每隔 60 分钟重复提醒；离座超过 1 分钟结束本轮。</p>
+      <button id="saveButton" class="primary save" type="button" disabled>保存设置到设备</button>
+      <div id="saveState" class="save-state" aria-live="polite">连接设备后可读取和修改设置。</div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">连接记录</h2>
+      <p class="hint">使用支持 Web Bluetooth 的 Chrome 或 Edge。蓝牙需在设备附近；手机系统显示“已配对”不代表网页已经连接。</p>
+      <pre id="log" class="log" aria-live="polite"></pre>
+    </section>
+  </main>
+
+  <script>
+    'use strict';
+
+    const SERVICE_UUID = '0100583e-3e44-62a4-5e4d-627b905a538d';
+    const COMMAND_UUID = '0200583e-3e44-62a4-5e4d-627b905a538d';
+    const STATUS_UUID = '0300583e-3e44-62a4-5e4d-627b905a538d';
+    const DEVICE_NAME = 'ESP32C3-Haptic';
+    const settingInputs = ['volume', 'delay1', 'delay2', 'delay3'];
+    let device;
+    let commandCharacteristic;
+    let statusCharacteristic;
+    let expectedSettings;
+    let settingsDirty = false;
+    let saveTimeout;
+
+    const element = (id) => document.getElementById(id);
+
+    function log(message) {
+      const timestamp = new Date().toLocaleTimeString();
+      element('log').textContent = `${timestamp} ${message}\n${element('log').textContent}`.slice(0, 2400);
+    }
+
+    function setConnected(connected) {
+      element('connectionDot').classList.toggle('online', connected);
+      element('connectionState').textContent = connected ? `已连接 ${device?.name || DEVICE_NAME}` : '未连接';
+      element('connectButton').hidden = connected;
+      element('disconnectButton').hidden = !connected;
+      settingInputs.forEach((id) => { element(id).disabled = !connected; });
+      element('saveButton').disabled = !connected;
+      if (!connected) {
+        commandCharacteristic = undefined;
+        statusCharacteristic = undefined;
+        clearTimeout(saveTimeout);
+      }
+    }
+
+    function setSaveState(message, isError = false) {
+      element('saveState').textContent = message;
+      element('saveState').classList.toggle('error', isError);
+    }
+
+    function readFormSettings() {
+      return {
+        volume: Number(element('volume').value),
+        delays: ['delay1', 'delay2', 'delay3'].map((id) => {
+          const value = element(id).value.trim();
+          return value === '' ? NaN : Number(value);
+        })
+      };
+    }
+
+    function updateStatus(status) {
+      if (typeof status.pressure !== 'boolean' ||
+          !Number.isInteger(status.volume) ||
+          !Array.isArray(status.delays) || status.delays.length !== 3 ||
+          !status.delays.every(Number.isInteger)) {
+        throw new Error('设备返回了不完整的状态数据');
+      }
+
+      element('pressureState').textContent = status.pressure ? '有压力 · 0' : '无压力 · 1';
+      element('pressureState').classList.toggle('active', status.pressure);
+      const expectedMatch = expectedSettings &&
+        status.volume === expectedSettings.volume &&
+        status.delays.every((value, index) => value === expectedSettings.delays[index]);
+      const mayUpdateSettings = !settingsDirty || expectedMatch;
+      if (mayUpdateSettings) {
+        element('volume').value = status.volume;
+        element('volumeValue').textContent = `${status.volume}%`;
+        ['delay1', 'delay2', 'delay3'].forEach((id, index) => {
+          element(id).value = Math.round(status.delays[index] / 60000);
+        });
+      }
+
+      if (expectedMatch) {
+        clearTimeout(saveTimeout);
+        settingsDirty = false;
+        expectedSettings = undefined;
+        setSaveState(status.saved ? '设备已应用并保存新设置。' : '设置已生效，但保存到 Flash 失败。', !status.saved);
+        element('saveButton').disabled = false;
+        log(status.saved ? '设备已确认并保存新设置。' : '设备应用设置成功，但 Flash 保存失败。');
+      } else if (!settingsDirty) {
+        setSaveState(status.saved ? '设备设置已保存。' : '设备设置已生效，但保存到 Flash 失败。', !status.saved);
+      }
+    }
+
+    function handleStatusChange(event) {
+      try {
+        const json = new TextDecoder('utf-8').decode(event.target.value);
+        const raw = JSON.parse(json);
+        updateStatus({
+          pressure: raw.p === 1,
+          volume: raw.v,
+          delays: raw.d,
+          saved: raw.ok === 1,
+          enabled: raw.on === 1,
+          enabledSaved: raw.k === 1,
+          sessionActive: raw.a === 1,
+          sessionSeconds: raw.s,
+          todaySittingSeconds: raw.t,
+          todaySessions: raw.n,
+          todayReminders: raw.r,
+          lastSessionSeconds: raw.l,
+          lastSessionReminders: raw.q,
+          lastSessionResponded: raw.x === 1,
+          clockSynced: raw.c === 1
+        });
+      } catch (error) {
+        log(`读取设备状态失败：${error.message}`);
+      }
+    }
+
+    function handleDisconnected() {
+      setConnected(false);
+      settingsDirty = false;
+      expectedSettings = undefined;
+      setSaveState('蓝牙已断开，请重新连接。', true);
+      log('蓝牙连接已断开。');
+    }
+
+    async function connect() {
+      if (!navigator.bluetooth) {
+        const message = '当前浏览器不支持 Web Bluetooth。请使用最新版 Chrome/Edge，并通过 HTTPS 或 localhost 打开。';
+        element('browserNotice').textContent = message;
+        element('browserNotice').hidden = false;
+        log(message);
+        return;
+      }
+
+      element('connectButton').disabled = true;
+      setSaveState('请在设备选择窗口选择 ESP32C3-Haptic…');
+      try {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{name: DEVICE_NAME}],
+          optionalServices: [SERVICE_UUID]
+        });
+        device.addEventListener('gattserverdisconnected', handleDisconnected);
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        commandCharacteristic = await service.getCharacteristic(COMMAND_UUID);
+        statusCharacteristic = await service.getCharacteristic(STATUS_UUID);
+        statusCharacteristic.addEventListener('characteristicvaluechanged', handleStatusChange);
+        await statusCharacteristic.startNotifications();
+        setConnected(true);
+        settingsDirty = false;
+        log(`已连接 ${device.name || DEVICE_NAME}。`);
+        const value = await statusCharacteristic.readValue();
+        const raw = JSON.parse(new TextDecoder('utf-8').decode(value));
+        updateStatus({
+          pressure: raw.p === 1,
+          volume: raw.v,
+          delays: raw.d,
+          saved: raw.ok === 1,
+          enabled: raw.on === 1,
+          enabledSaved: raw.k === 1,
+          sessionActive: raw.a === 1,
+          sessionSeconds: raw.s,
+          todaySittingSeconds: raw.t,
+          todaySessions: raw.n,
+          todayReminders: raw.r,
+          lastSessionSeconds: raw.l,
+          lastSessionReminders: raw.q,
+          lastSessionResponded: raw.x === 1,
+          clockSynced: raw.c === 1
+        });
+        const localEpochSeconds = Math.floor(Date.now() / 1000) -
+          new Date().getTimezoneOffset() * 60;
+        try {
+          await commandCharacteristic.writeValueWithResponse(
+            new TextEncoder().encode(`CLOCK ${localEpochSeconds}`)
+          );
+        } catch (error) {
+          setSaveState(`已连接，但手机日期同步失败：${error.message}`, true);
+          log(`日期同步失败：${error.message}`);
+        }
+      } catch (error) {
+        if (device?.gatt?.connected) device.gatt.disconnect();
+        setConnected(false);
+        if (error.name === 'NotFoundError') {
+          setSaveState('未选择设备。确认 ESP32 已上电并正在广播，再重试。', true);
+        } else {
+          setSaveState(`连接失败：${error.message}`, true);
+        }
+        log(`连接失败：${error.message}`);
+      } finally {
+        element('connectButton').disabled = false;
+      }
+    }
+
+    async function disconnect() {
+      if (device?.gatt?.connected) device.gatt.disconnect();
+      handleDisconnected();
+    }
+
+    async function saveSettings() {
+      const settings = readFormSettings();
+      if (!Number.isInteger(settings.volume) || settings.volume < 0 || settings.volume > 100 ||
+          settings.delays.some((value) => !Number.isInteger(value) || value < 1 || value > 1440) ||
+          settings.delays[0] > settings.delays[1] ||
+          settings.delays[1] > settings.delays[2]) {
+        setSaveState('音量需为 0–100%，触发时间需为 1–1440 分钟且按顺序不得递减。', true);
+        return;
+      }
+      if (!commandCharacteristic) {
+        setSaveState('蓝牙尚未连接，请先连接设备。', true);
+        return;
+      }
+
+      const persistedSettings = {
+        volume: settings.volume,
+        delays: settings.delays.map((minutes) => minutes * 60000)
+      };
+      const command = `AUDIO ${persistedSettings.volume} ${persistedSettings.delays.join(' ')}`;
+      expectedSettings = persistedSettings;
+      element('saveButton').disabled = true;
+      setSaveState('设置已发送，等待设备写入 Flash 确认…');
+      try {
+        await commandCharacteristic.writeValueWithResponse(new TextEncoder().encode(command));
+        settingsDirty = false;
+        log(`已发送设置：${command}`);
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+          if (expectedSettings) {
+            expectedSettings = undefined;
+            element('saveButton').disabled = false;
+            setSaveState('等待设备确认超时。请检查连接和设备日志后重试。', true);
+          }
+        }, 10000);
+      } catch (error) {
+        expectedSettings = undefined;
+        element('saveButton').disabled = false;
+        setSaveState(`设置发送失败：${error.message}`, true);
+        log(`写入设置失败：${error.message}`);
+      }
+    }
+
+    element('volume').addEventListener('input', () => {
+      settingsDirty = true;
+      element('volumeValue').textContent = `${element('volume').value}%`;
+    });
+    ['delay1', 'delay2', 'delay3'].forEach((id) => {
+      element(id).addEventListener('input', () => { settingsDirty = true; });
+    });
+    element('connectButton').addEventListener('click', connect);
+    element('disconnectButton').addEventListener('click', disconnect);
+    element('saveButton').addEventListener('click', saveSettings);
+
+    if (!window.isSecureContext) {
+      const message = '蓝牙网页需要安全来源：使用 HTTPS，或在运行网页的本机通过 localhost 打开。';
+      element('browserNotice').textContent = message;
+      element('browserNotice').hidden = false;
+      log(message);
+    } else if (!navigator.bluetooth) {
+      const message = '此浏览器没有 Web Bluetooth API。请尝试最新版 Chrome 或 Edge。';
+      element('browserNotice').textContent = message;
+      element('browserNotice').hidden = false;
+      log(message);
+    }
+  </script>
+</body>
+</html>

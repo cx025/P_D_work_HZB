@@ -1,0 +1,14 @@
+{
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "久坐健康管家",
+    "navigationBarBackgroundColor": "#f3f7fc",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f3f7fc",
+    "backgroundTextStyle": "light"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

@@ -1,0 +1,279 @@
+<view class="page">
+  <view class="hero">
+    <view class="eyebrow"><view class="pulse-dot"></view> SMART SITTING CARE</view>
+    <view class="title">SYNAPUFF</view>
+    <view class="subtitle">温和提醒，起身活动，让每一段专注都更健康。</view>
+</view>
+
+  <view class="card connection-card">
+    <view class="connection-row">
+      <view class="connection-state">
+        <view class="dot {{connected ? 'online' : ''}}"></view>
+        <view>
+          <view class="connection-title">{{connected ? connectedName : '设备未连接'}}</view>
+          <view class="connection-caption">{{connected ? '蓝牙已连接 · 实时同步' : (scanning ? '正在搜索附近设备…' : '连接设备以查看久坐数据')}}</view>
+        </view>
+      </view>
+      <button wx:if="{{!connected && !scanning}}" class="primary compact" disabled="{{scanCooldown}}" bindtap="startScan">连接设备</button>
+      <button wx:if="{{scanning}}" class="secondary compact" bindtap="stopScan">停止搜索</button>
+      <button wx:if="{{connected}}" class="secondary compact" bindtap="disconnect">断开</button>
+    </view>
+
+    <view wx:if="{{scanning && devices.length === 0}}" class="empty">
+      请确认 ESP32-C3 已上电、手机蓝牙已开启，并允许微信使用蓝牙。
+    </view>
+    <view wx:if="{{scanFinished && devices.length === 0 && !connected}}" class="empty">
+      没有发现 ESP32-C3。请检查设备电源与蓝牙权限后重试。
+    </view>
+    <view wx:if="{{devices.length > 0 && !connected}}" class="device-list">
+      <view class="section-label">发现的设备</view>
+      <view wx:for="{{devices}}" wx:key="deviceId" class="device-row" data-device-id="{{item.deviceId}}" data-name="{{item.name}}" bindtap="connectDevice">
+        <view>
+          <view class="device-name">{{item.name || 'ESP32-C3'}}<text class="target-badge">已识别</text></view>
+          <view class="device-id">{{item.deviceId}}</view>
+        </view>
+        <view class="connect-mark">连接 ›</view>
+      </view>
+    </view>
+
+    <view class="monitor-banner {{connected ? '' : 'monitor-offline'}}">
+      <view class="monitor-copy">
+        <view class="monitor-label">当前状态</view>
+        <view class="monitor-value">{{connected ? (leaveConfirming ? '离座确认中' : (sessionActive ? '连续久坐中' : (pressure ? '入座确认中' : '暂未入座'))) : '连接后显示传感器状态'}}</view>
+      </view>
+      <view wx:if="{{connected && sessionActive}}" class="live-time">
+        <view class="monitor-label">本轮久坐</view>
+        <view class="live-value">{{sessionDuration}}</view>
+      </view>
+      <view class="seat-indicator {{connected && pressure ? 'occupied' : ''}}"><view class="seat-ring"></view></view>
+    </view>
+
+    <view class="power-row">
+      <view class="power-copy">
+        <view class="power-title">提醒声音</view>
+        <view class="power-hint">{{connected ? remindersHint : '连接设备后可开启或静音提醒'}}</view>
+      </view>
+      <button class="power-button {{remindersEnabled ? 'power-on' : 'power-off'}}" loading="{{powerBusy}}" disabled="{{!connected || powerBusy}}" bindtap="toggleReminders">
+        {{connected ? (remindersEnabled ? '声音开启' : '已静音') : '未连接'}}
+      </button>
+    </view>
+  </view>
+
+  <view class="card motor-control-card">
+    <view class="section-heading">
+      <view>
+        <view class="section-title">马达独立控制</view>
+        <view class="section-subtitle">{{connected ? '直接启停马达，不依赖久坐提醒' : '连接设备后可设置并独立启停'}}</view>
+      </view>
+      <view class="live-chip" wx:if="{{connected && motorDirectRunning}}"><view class="live-chip-dot"></view>马达运行中</view>
+    </view>
+
+    <view class="motor-control-group">
+      <view class="setting-title">振幅</view>
+      <view class="motor-input-row">
+        <view class="motor-input-field">
+          <input class="motor-input" type="number" value="{{manualMotorAmplitude}}" disabled="{{!connected || motorDirectRunning}}" data-field="manualMotorAmplitude" bindinput="onMotorSettingInput" />
+          <text>%</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="motor-control-group">
+      <view class="setting-title">振动频率</view>
+      <view class="motor-input-row">
+        <view class="motor-input-field">
+          <input class="motor-input" type="number" value="{{manualMotorFrequencyHz}}" disabled="{{!connected || motorDirectRunning}}" data-field="manualMotorFrequencyHz" bindinput="onMotorSettingInput" />
+          <text>Hz</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="motor-control-group">
+      <view class="setting-title">PWM 载波频率</view>
+      <view class="motor-input-row">
+        <view class="motor-input-field motor-carrier-field">
+          <text>DRV8833 PWM</text>
+          <input class="motor-input" type="number" value="{{motorPwmCarrierHz}}" disabled="{{!connected}}" data-field="motorPwmCarrierHz" bindinput="onMotorSettingInput" />
+          <text>Hz</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="motor-actions">
+      <button class="primary motor-action-button" loading="{{motorDirectBusy && !motorDirectRunning}}" disabled="{{!connected || stopBusy || motorDirectBusy || motorDirectRunning}}" bindtap="startMotorDirect">启动马达</button>
+      <button class="secondary motor-action-button" disabled="{{!connected || stopBusy || motorDirectBusy}}" bindtap="stopReminderAndVibration">停止马达和音效</button>
+    </view>
+    <view class="repeat-note">独立直驱只使用以上振幅、振动频率和 PWM 载波。振幅范围 1–90%，振动频率 40–200 Hz，载波频率 5000–30000 Hz。输入参数后点击启动即应用；运行中先停止再调整。直驱会持续运行，请避免长时间空转；断开蓝牙也会停止马达。</view>
+  </view>
+
+  <view class="card manual-card">
+    <view class="section-heading">
+      <view>
+        <view class="section-title">手动振动</view>
+        <view class="section-subtitle">{{connected ? '独立于久坐提醒，直接驱动马达' : '连接设备后可手动触发马达'}}</view>
+      </view>
+      <view class="live-chip" wx:if="{{connected && manualRunning}}"><view class="live-chip-dot"></view>振动中</view>
+    </view>
+
+    <view class="setting-block">
+      <view class="setting-title">震动强度</view>
+      <view class="vibration-effects">
+        <button wx:for="{{manualVibrationEffects}}" wx:key="id" class="vibration-effect {{!connected || stopBusy || manualRunning || manualBusy || motorDirectRunning ? 'level-disabled' : ''}}" data-effect="{{item.id}}" disabled="{{!connected || stopBusy || manualRunning || manualBusy || motorDirectRunning}}" bindtap="triggerVibrationEffect">
+          <view class="level-name">{{item.name}}</view>
+        </button>
+      </view>
+    </view>
+
+    <view class="setting-block">
+      <view class="setting-title">独立触发久坐提醒</view>
+      <view class="vibration-effects">
+        <button class="vibration-effect {{!connected || stopBusy || reminderTriggerBusy || manualRunning || motorDirectRunning ? 'level-disabled' : ''}}" data-level="1" disabled="{{!connected || stopBusy || reminderTriggerBusy || manualRunning || motorDirectRunning}}" bindtap="triggerReminder">
+          <view class="level-name">一段</view>
+          <view class="level-detail">轻微屁 · 阶段1</view>
+        </button>
+        <button class="vibration-effect {{!connected || stopBusy || reminderTriggerBusy || manualRunning || motorDirectRunning ? 'level-disabled' : ''}}" data-level="2" disabled="{{!connected || stopBusy || reminderTriggerBusy || manualRunning || motorDirectRunning}}" bindtap="triggerReminder">
+          <view class="level-name">二段</view>
+          <view class="level-detail">爆炸屁 · 对应短震</view>
+        </button>
+        <button class="vibration-effect {{!connected || stopBusy || reminderTriggerBusy || manualRunning || motorDirectRunning ? 'level-disabled' : ''}}" data-level="3" disabled="{{!connected || stopBusy || reminderTriggerBusy || manualRunning || motorDirectRunning}}" bindtap="triggerReminder">
+          <view class="level-name">三段</view>
+          <view class="level-detail">尴尬屁 · 分段震动</view>
+        </button>
+      </view>
+    </view>
+
+    <view class="manual-actions">
+      <button class="secondary manual-stop" disabled="{{!connected || stopBusy || motorDirectBusy}}" bindtap="stopReminderAndVibration">停止提醒和震动</button>
+    </view>
+    <view class="repeat-note">选择弱、强或长震；长震持续 5 秒，触发后自动停止。</view>
+  </view>
+
+  <view class="card stats-card">
+    <view class="section-heading">
+      <view>
+        <view class="section-title">今日久坐概览</view>
+        <view class="section-subtitle">{{!connected ? '连接设备后读取统计' : (clockSynced ? '按手机本地日期统计' : '正在同步手机日期…')}}</view>
+      </view>
+      <view class="live-chip"><view class="live-chip-dot"></view>今日</view>
+    </view>
+    <view class="stats-grid">
+      <view class="stat-tile stat-blue">
+        <view class="stat-icon">时</view>
+        <view class="stat-number">{{connected ? todayDuration : '--'}}</view>
+        <view class="stat-label">久坐时长</view>
+      </view>
+      <view class="stat-tile stat-purple">
+        <view class="stat-icon">轮</view>
+        <view class="stat-number">{{connected ? todaySessions : '--'}}</view>
+        <view class="stat-label">完成轮次</view>
+      </view>
+      <view class="stat-tile stat-orange">
+        <view class="stat-icon">铃</view>
+        <view class="stat-number">{{connected ? todayReminders : '--'}}</view>
+        <view class="stat-label">提醒次数</view>
+      </view>
+      <view class="stat-tile stat-mint">
+        <view class="stat-icon">应</view>
+        <view class="stat-number stat-result">{{!connected ? '--' : (lastSessionExists ? (lastSessionReminders > 0 ? '已响应' : '无提醒') : '—')}}</view>
+        <view class="stat-label">上轮响应结果</view>
+      </view>
+    </view>
+    <view class="last-session">
+      <view class="last-session-label">上一轮记录</view>
+      <view class="last-session-value">{{connected ? lastSessionDuration : '--'}}<text wx:if="{{connected}}"> · {{lastSessionReminders}} 次提醒</text></view>
+    </view>
+  </view>
+
+  <view class="card history-card">
+    <view class="section-heading">
+      <view>
+        <view class="section-title">使用记录</view>
+        <view class="section-subtitle">{{historyNote || '连接设备后自动同步离线期间的每次使用记录'}}</view>
+      </view>
+      <view class="history-actions">
+        <view class="live-chip">{{historySyncing ? '同步中' : historyCount + ' 条'}}</view>
+        <view wx:if="{{connected}}" class="clear-history" bindtap="clearHistory">清空</view>
+      </view>
+    </view>
+
+    <view wx:if="{{historyList.length === 0}}" class="empty">
+      暂无记录。设备会在入座开始、久坐完成、提醒触发和异常断电时记录，并在下次连接时同步到手机。
+    </view>
+
+    <view wx:for="{{historyList}}" wx:key="seq" class="history-row">
+      <view class="history-dot history-dot-{{item.type}}"></view>
+      <view class="history-main">
+        <view class="history-top">
+          <view class="history-title-group">
+            <text class="history-type">{{item.typeLabel}}</text>
+            <text class="history-mode {{item.online ? 'online' : 'offline'}}">{{item.online ? '在线' : '离线'}}</text>
+          </view>
+          <text class="history-time">{{item.timeText}}</text>
+        </view>
+        <view class="history-summary">{{item.summary}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card settings-card">
+    <view class="section-heading">
+      <view>
+        <view class="section-title">提醒与设备设置</view>
+        <view class="section-subtitle">{{connected ? '设置保存在设备，断电后仍有效' : '连接设备后读取并修改设置'}}</view>
+      </view>
+      <view class="settings-mark">CONTROL</view>
+    </view>
+
+    <view class="setting-block">
+      <view class="setting-heading">
+        <view class="setting-title">提醒音量</view>
+        <view class="volume-pill">{{connected ? volume : '--'}}<text wx:if="{{connected}}">%</text></view>
+      </view>
+      <slider class="volume-slider" min="0" max="100" step="1" value="{{volume}}" disabled="{{!connected}}" activeColor="#2478f2" backgroundColor="#dce7f5" block-color="#ffffff" bindchanging="onVolumeChanging" bindchange="onVolumeChange" />
+    </view>
+
+    <view class="setting-block motor-frequency-block">
+      <view class="setting-title">自动提醒马达参数</view>
+      <view class="motor-input-row">
+        <view class="motor-input-field">
+          <text>二级振幅</text>
+          <input class="motor-input" type="number" value="{{blastAmplitude}}" disabled="{{!connected}}" data-field="blastAmplitude" bindinput="onMotorSettingInput" />
+          <text>%</text>
+        </view>
+        <view class="motor-input-field">
+          <text>二级频率</text>
+          <input class="motor-input" type="number" value="{{blastFrequencyHz}}" disabled="{{!connected}}" data-field="blastFrequencyHz" bindinput="onMotorSettingInput" />
+          <text>Hz</text>
+        </view>
+        <view class="motor-input-field">
+          <text>三级振幅</text>
+          <input class="motor-input" type="number" value="{{motorAmplitude}}" disabled="{{!connected}}" data-field="motorAmplitude" bindinput="onMotorSettingInput" />
+          <text>%</text>
+        </view>
+        <view class="motor-input-field">
+          <text>三级频率</text>
+          <input class="motor-input" type="number" value="{{motorFrequencyHz}}" disabled="{{!connected}}" data-field="motorFrequencyHz" bindinput="onMotorSettingInput" />
+          <text>Hz</text>
+        </view>
+      </view>
+      <view class="repeat-note">只用于二级、三级久坐自动提醒，与上方马达独立控制参数分开设置。</view>
+    </view>
+
+    <view class="setting-block timing-block">
+      <view class="setting-title">久坐提醒时间</view>
+      <view class="setting-description">从入座确认 30 秒后开始累计；有效离座需超过 1 分钟。</view>
+      <view class="delay-row" wx:for="{{delays}}" wx:key="name">
+        <view class="delay-order">{{index + 1}}</view>
+        <view class="delay-name">{{item.name}}</view>
+        <input class="delay-input" type="number" value="{{connected ? item.value : ''}}" placeholder="{{connected ? '' : '--'}}" disabled="{{!connected}}" data-index="{{index}}" bindinput="onDelayInput" />
+        <text class="unit">分钟</text>
+      </view>
+      <view class="repeat-note">三级提醒后仍久坐，每隔 60 分钟重复提醒。提醒次数按实际播放统计；静音时久坐时长和轮次仍继续统计。</view>
+    </view>
+
+    <button class="primary save-button" loading="{{saving}}" disabled="{{!connected || saving}}" bindtap="saveSettings">保存设置到设备</button>
+    <view class="save-state {{saveError ? 'error' : ''}}">{{connected ? saveState : '连接设备后可读取和修改设置。'}}</view>
+  </view>
+
+  <view class="footer-note">坐满 30 秒后开始本轮计时 · 离座超过 1 分钟结束本轮</view>
+</view>
